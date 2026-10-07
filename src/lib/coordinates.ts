@@ -1,8 +1,10 @@
 export type Point = { x: number; y: number };
 export type Camera = { scale: number; x: number; y: number };
+export const MIN_ZOOM = .25;
+export const MAX_ZOOM = 64;
 export function toPixel(point: Point, camera: Camera): Point { return { x: Math.floor((point.x - camera.x) / camera.scale), y: Math.floor((point.y - camera.y) / camera.scale) }; }
 export function zoomAt(camera: Camera, point: Point, scale: number): Camera {
-  const next = Math.max(.5, Math.min(64, scale)), ratio = next / camera.scale;
+  const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale)), ratio = next / camera.scale;
   return { scale: next, x: point.x - (point.x - camera.x) * ratio, y: point.y - (point.y - camera.y) * ratio };
 }
 export function line(from: Point, to: Point, visit: (x: number, y: number) => void) {

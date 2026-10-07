@@ -22,6 +22,32 @@ async function openColors(page: Page) {
 }
 test.beforeEach(async ({ page }) => { await page.goto('/'); await saved(page); });
 
+test('painting the same cell replaces its color in autosave and exported PNG', async ({ page }) => {
+  const canvas = (await page.getByTestId('pixel-canvas').boundingBox())!;
+  const x = canvas.x + canvas.width / 2 + 1, y = canvas.y + canvas.height / 2 - 14;
+  let finalColor = '';
+  for (const family of ['Green', 'Yellow']) {
+    const dialog = await openColors(page);
+    await dialog.getByRole('button', { name: `${family} family` }).click();
+    const shade = dialog.getByRole('button', { name: new RegExp(`^${family} shade 65 `) });
+    finalColor = (await shade.getAttribute('title'))!;
+    await shade.click(); await dialog.getByRole('button', { name: 'Close panel' }).click();
+    await page.mouse.click(x, y);
+    const packed = Number.parseInt(finalColor.slice(1) + 'FF', 16);
+    await expect.poll(async () => (await draftPixels(page)).pixels[16 * 32 + 16]).toBe(packed);
+  }
+  for (let i = 0; i < 30; i++) await page.mouse.click(x, y);
+  const draft = await draftPixels(page);
+  expect(draft.pixels).toHaveLength(1024); expect(draft.count).toBe(1);
+  await page.getByRole('button', { name: 'Export PNG' }).click();
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('link', { name: 'Download PNG' }).click()]);
+  const png = PNG.sync.read(await readFile((await download.path())!));
+  expect([...png.data.subarray((16 * 32 + 16) * 4, (16 * 32 + 17) * 4)]).toEqual([
+    ...finalColor.slice(1).match(/../g)!.map(hex => Number.parseInt(hex, 16)), 255,
+  ]);
+  expect(Array.from({ length: 1024 }, (_, i) => png.data[i * 4 + 3]).filter(Boolean)).toHaveLength(1);
+});
+
 test('draw, undo, redo, erase, sample, export exact transparent PNG and restore', async ({ page }, info) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await stroke(page);
@@ -46,7 +72,7 @@ test('draw, undo, redo, erase, sample, export exact transparent PNG and restore'
   await exportDialog.getByRole('button', { name: 'Close panel' }).click();
   await page.getByRole('button', { name: 'Switch to dark theme' }).click(); await saved(page);
   await page.screenshot({ path: `test-results/${info.project.name}-dark.png` });
-  await page.reload(); await page.getByRole('button', { name: 'Restore artwork' }).click(); await saved(page);
+  await page.reload(); await saved(page); await expect(page.getByRole('dialog')).toHaveCount(0);
   expect((await draftPixels(page)).pixels).toEqual(painted.pixels); await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   expect(errors).toEqual([]);
 });
@@ -121,6 +147,7 @@ test('desktop shortcuts, right-click eraser, Alt sample, Space pan and wheel zoo
   await page.keyboard.down('Alt'); await page.mouse.click(x, y); await page.keyboard.up('Alt'); await saved(page);
   expect((await draftPixels(page)).preferences.color).toBe('#8061DB');
   await page.keyboard.down('Space'); await stroke(page, 8); await page.keyboard.up('Space'); expect((await draftPixels(page)).pixels).toEqual(before);
-  const zoomBefore = await page.getByTestId('zoom').textContent(); await page.mouse.wheel(0, -150);
+  const zoomBefore = await page.getByTestId('zoom').textContent();
+  await page.keyboard.down('Control'); await page.mouse.wheel(0, -150); await page.keyboard.up('Control');
   await expect(page.getByTestId('zoom')).not.toHaveText(zoomBefore!);
 });

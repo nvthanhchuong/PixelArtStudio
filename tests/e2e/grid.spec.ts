@@ -25,7 +25,7 @@ test('center axes render independently, persist, preserve old drafts, and stay o
   await page.screenshot({ path: `test-results/${info.project.name}-center-axes-light.png` });
   await page.getByRole('button', { name: 'Switch to dark theme' }).click(); await saved(page);
   await page.screenshot({ path: `test-results/${info.project.name}-center-axes-dark.png` });
-  await page.reload(); await page.getByRole('button', { name: 'Restore artwork' }).click(); await saved(page);
+  await page.reload(); await saved(page);
   dialog = await openGrid(page);
   await expect(dialog.getByRole('switch', { name: 'Show center axes' })).toHaveAttribute('aria-checked', 'true');
   await expect(dialog.getByRole('switch', { name: 'Show pixel grid' })).toHaveAttribute('aria-checked', 'false');
@@ -36,14 +36,16 @@ test('center axes render independently, persist, preserve old drafts, and stay o
   expect([png.width, png.height]).toEqual([32, 32]); expect([...png.data].every(value => value === 0)).toBe(true);
   await page.getByRole('button', { name: 'Close panel' }).click();
   // Simulate a pre-update draft: the newly added preference is absent.
+  await page.goto('/favicon.svg');
   await page.evaluate(async () => {
+    localStorage.removeItem('pixel-studio:draft-backup'); localStorage.removeItem('pixel-studio:recovery-draft');
     const db = await new Promise<IDBDatabase>(resolve => { const request = indexedDB.open('pixel-studio', 1); request.onsuccess = () => resolve(request.result); });
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction('projects', 'readwrite'), store = tx.objectStore('projects'), request = store.get('draft');
-      request.onsuccess = () => { const draft = request.result; delete draft.preferences.centerAxesVisible; store.put(draft, 'draft'); };
+      request.onsuccess = () => { const draft = request.result; delete draft.preferences.centerAxesVisible; delete draft.preferences.wheelBehavior; store.put(draft, 'draft'); };
       tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error);
     }); db.close();
   });
-  await page.reload(); await page.getByRole('button', { name: 'Restore artwork' }).click(); await saved(page);
+  await page.goto('/'); await saved(page);
   dialog = await openGrid(page); await expect(dialog.getByRole('switch', { name: 'Show center axes' })).toHaveAttribute('aria-checked', 'false');
 });

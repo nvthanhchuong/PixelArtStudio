@@ -2,13 +2,14 @@
 import { useEffect, useRef } from 'react';
 import { Maximize, Minus, Plus } from 'lucide-react';
 import { PixelEngine } from '@/lib/engine';
-import { toPixel, zoomAt, type Camera, type Point } from '@/lib/coordinates';
+import { MIN_ZOOM, toPixel, zoomAt, type Camera, type Point } from '@/lib/coordinates';
 import { useEditor } from '@/lib/store';
+import { drawPixelGrid, drawCenterAxes } from '@/lib/canvasGuides';
 
 export function PixelCanvas({ engine }: { engine: PixelEngine }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const controls = useRef<{ fit: () => void; zoom: (factor: number) => void } | null>(null);
-  const zoom = useEditor(s => s.zoom), tool = useEditor(s => s.tool);
+  const controls = useRef<{ fit: () => void; reset: () => void; zoom: (factor: number) => void } | null>(null);
+  const zoom = useEditor(s => s.zoom), tool = useEditor(s => s.tool), hydrated = useEditor(s => s.hydrated);
   useEffect(() => {
     const canvas = canvasRef.current!, ctx = canvas.getContext('2d')!;
     const buffer = document.createElement('canvas'), bufferContext = buffer.getContext('2d')!;
@@ -17,6 +18,7 @@ export function PixelCanvas({ engine }: { engine: PixelEngine }) {
     let last: Point | null = null, mode: 'draw' | 'pan' | 'pick' | 'gesture' | null = null;
     let strokeColor: string | null = null, strokeSize = 1;
     let previousGesture: { midpoint: Point; distance: number } | null = null;
+    let trackpadGesture: { camera: Camera; anchor: Point; scale: number } | null = null;
     const pointers = new Map<number, Point>();
     function schedule() { if (!frame) frame = requestAnimationFrame(render); }
     function render() {
@@ -24,57 +26,37 @@ export function PixelCanvas({ engine }: { engine: PixelEngine }) {
       const dpr = window.devicePixelRatio || 1;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, width, height);
       if (dirty) {
-        buffer.width = engine.width; buffer.height = engine.height;
-        bufferContext.putImageData(new ImageData(engine.rgba(), engine.width, engine.height), 0, 0); dirty = false;
+        if (buffer.width !== engine.width) buffer.width = engine.width;
+        if (buffer.height !== engine.height) buffer.height = engine.height;
+        bufferContext.putImageData(new ImageData(engine.rgba(engine.displayFrame), engine.width, engine.height), 0, 0); dirty = false;
       }
       const bw = engine.width * camera.scale, bh = engine.height * camera.scale;
       const theme = useEditor.getState().theme;
       ctx.save(); ctx.shadowColor = theme === 'dark' ? '#00000070' : '#28234518'; ctx.shadowBlur = 28; ctx.shadowOffsetY = 8;
-      ctx.fillStyle = theme === 'dark' ? '#292a34' : '#ffffff'; ctx.fillRect(camera.x, camera.y, bw, bh); ctx.restore();
+      ctx.fillStyle = theme === 'dark' ? '#252730' : '#ffffff'; ctx.fillRect(camera.x, camera.y, bw, bh); ctx.restore();
       ctx.save(); ctx.beginPath(); ctx.rect(camera.x, camera.y, bw, bh); ctx.clip();
-      const tile = Math.max(8, camera.scale * 2);
-      ctx.fillStyle = theme === 'dark' ? '#323440' : '#f0f0f5';
+      const tile = Math.max(8, camera.scale * 4);
+      ctx.fillStyle = theme === 'dark' ? '#2c2e38' : '#f5f5f9';
       const colStart = Math.max(0, Math.floor(-camera.x / tile)), rowStart = Math.max(0, Math.floor(-camera.y / tile));
       const colEnd = Math.min(Math.ceil(bw / tile), Math.ceil((width - camera.x) / tile));
       const rowEnd = Math.min(Math.ceil(bh / tile), Math.ceil((height - camera.y) / tile));
       for (let y = rowStart; y < rowEnd; y++) for (let x = colStart; x < colEnd; x++) if ((x + y) % 2 === 0) ctx.fillRect(camera.x + x * tile, camera.y + y * tile, tile, tile);
       ctx.imageSmoothingEnabled = false; ctx.drawImage(buffer, camera.x, camera.y, bw, bh);
       const { gridSize, gridVisible, centerAxesVisible } = useEditor.getState();
-      if (gridVisible && camera.scale * gridSize >= 4) {
-        const deviceLineWidth = Math.max(1, Math.round(dpr));
-        const align = (value: number) => (Math.round(value * dpr) + (deviceLineWidth % 2) / 2) / dpr;
-        ctx.beginPath(); ctx.strokeStyle = theme === 'dark' ? '#ffffff52' : '#3f36575c'; ctx.lineWidth = deviceLineWidth / dpr;
-        for (let x = 0; x <= engine.width; x += gridSize) { const px = align(camera.x + x * camera.scale); if (px >= 0 && px <= width) { ctx.moveTo(px, camera.y); ctx.lineTo(px, camera.y + bh); } }
-        for (let y = 0; y <= engine.height; y += gridSize) { const py = align(camera.y + y * camera.scale); if (py >= 0 && py <= height) { ctx.moveTo(camera.x, py); ctx.lineTo(camera.x + bw, py); } }
-        ctx.stroke();
-      }
-      if (centerAxesVisible) {
-        // Geometric center: odd dimensions correctly place guides through a pixel's center.
-        const cx = camera.x + bw / 2, cy = camera.y + bh / 2;
-        ctx.save(); ctx.setLineDash([7, 5]);
-        const guide = (from: Point, to: Point, color: string) => {
-          ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y);
-          ctx.strokeStyle = theme === 'dark' ? '#17171ddd' : '#ffffffdd'; ctx.lineWidth = 4; ctx.stroke();
-          ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
-        };
-        guide({ x: camera.x, y: cy }, { x: camera.x + bw, y: cy }, theme === 'dark' ? '#F391BE' : '#CB477F');
-        guide({ x: cx, y: camera.y }, { x: cx, y: camera.y + bh }, theme === 'dark' ? '#91B9FF' : '#4678CF');
-        ctx.setLineDash([]); ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-        ctx.fillStyle = theme === 'dark' ? '#17171d' : '#ffffff'; ctx.fill();
-        ctx.strokeStyle = theme === 'dark' ? '#C8AEFF' : '#7759D9'; ctx.lineWidth = 2; ctx.stroke();
-        ctx.restore();
-      }
-      ctx.restore(); ctx.strokeStyle = theme === 'dark' ? '#ffffff20' : '#b8b5c5'; ctx.lineWidth = 1; ctx.strokeRect(camera.x, camera.y, bw, bh);
+      if (gridVisible) drawPixelGrid(ctx, camera, engine.width, engine.height, gridSize, theme === 'dark', dpr, width, height);
+      if (centerAxesVisible) drawCenterAxes(ctx, camera, engine.width, engine.height, theme === 'dark', dpr);
+      ctx.restore(); ctx.strokeStyle = theme === 'dark' ? '#b5a9d040' : '#9d94b166'; ctx.lineWidth = 1 / dpr; ctx.strokeRect(camera.x, camera.y, bw, bh);
     }
     function publishZoom() { useEditor.getState().set({ zoom: camera.scale }); }
     function fit() {
       const shortLandscape = window.matchMedia('(max-width: 899px) and (orientation: landscape) and (max-height: 500px)').matches;
-      const scale = Math.max(.5, Math.min(16, (width - 64) / engine.width, (height - (shortLandscape ? 48 : 110)) / engine.height));
+      const scale = Math.max(MIN_ZOOM, Math.min(16, (width - 64) / engine.width, (height - (shortLandscape ? 48 : 110)) / engine.height));
       camera = { scale, x: (width - engine.width * scale) / 2, y: (height - engine.height * scale) / 2 - 15 };
       publishZoom(); schedule();
     }
     function resize() {
       const rect = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+      if (width === rect.width && height === rect.height && canvas.width === Math.round(rect.width * dpr) && canvas.height === Math.round(rect.height * dpr)) return;
       width = rect.width; height = rect.height; canvas.width = Math.round(width * dpr); canvas.height = Math.round(height * dpr); fit();
     }
     function location(event: PointerEvent | WheelEvent) { const rect = canvas.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; }
@@ -83,8 +65,10 @@ export function PixelCanvas({ engine }: { engine: PixelEngine }) {
       return { midpoint: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, distance: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)) };
     }
     function down(event: PointerEvent) {
+      if (!useEditor.getState().hydrated || engine.playing) return;
       if (event.button !== 0 && event.button !== 2 && event.button !== 1) return;
       event.preventDefault();
+      canvas.focus({ preventScroll: true });
       try { canvas.setPointerCapture(event.pointerId); } catch { /* Synthetic events have no active native pointer. */ }
       const point = location(event); pointers.set(event.pointerId, point);
       if (pointers.size >= 2) {
@@ -122,7 +106,11 @@ export function PixelCanvas({ engine }: { engine: PixelEngine }) {
       last = point;
     }
     function finish() {
-      if (mode === 'draw' && engine.commit()) useEditor.getState().changed();
+      if (mode === 'draw' && engine.commit()) {
+        const state = useEditor.getState();
+        if (strokeColor && state.recent[0] !== strokeColor) state.chooseColor(strokeColor);
+        state.changed();
+      }
       if (mode === 'pan' || mode === 'gesture') publishZoom();
       mode = null; last = null; previousGesture = null;
     }
@@ -133,13 +121,50 @@ export function PixelCanvas({ engine }: { engine: PixelEngine }) {
       finish();
     }
     function wheel(event: WheelEvent) {
-      event.preventDefault(); camera = zoomAt(camera, location(event), camera.scale * Math.exp(-event.deltaY * .002)); publishZoom(); schedule();
+      event.preventDefault();
+      if (!useEditor.getState().hydrated || pointers.size || trackpadGesture) return;
+      // Touchpads report two-finger movement as wheel events without a mouse press.
+      // Use modifiers for zoom rather than guessing the input device from delta values.
+      const unit = event.deltaMode;
+      const dx = event.deltaX * (unit === 1 ? 16 : unit === 2 ? width : 1);
+      const dy = event.deltaY * (unit === 1 ? 16 : unit === 2 ? height : 1);
+      if (event.ctrlKey || event.metaKey) {
+        camera = zoomAt(camera, location(event), camera.scale * Math.exp(-dy * .002));
+        publishZoom();
+      } else {
+        camera.x -= event.shiftKey && dx === 0 ? dy : dx;
+        camera.y -= event.shiftKey && dx === 0 ? 0 : dy;
+      }
+      schedule();
+    }
+    type SafariGesture = Event & { scale?: number; clientX?: number; clientY?: number };
+    function nativeGestureStart(event: SafariGesture) {
+      event.preventDefault();
+      if (!useEditor.getState().hydrated || pointers.size) return; // Touchscreen pinch is already handled by Pointer Events.
+      const rect = canvas.getBoundingClientRect();
+      const anchor = Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+        ? { x: event.clientX! - rect.left, y: event.clientY! - rect.top }
+        : { x: width / 2, y: height / 2 };
+      trackpadGesture = { camera: { ...camera }, anchor, scale: event.scale && event.scale > 0 ? event.scale : 1 };
+    }
+    function nativeGestureChange(event: SafariGesture) {
+      event.preventDefault();
+      if (!trackpadGesture || pointers.size || !Number.isFinite(event.scale) || event.scale! <= 0) return;
+      camera = zoomAt(trackpadGesture.camera, trackpadGesture.anchor, trackpadGesture.camera.scale * event.scale! / trackpadGesture.scale);
+      schedule();
+    }
+    function nativeGestureEnd(event: Event) {
+      event.preventDefault();
+      if (trackpadGesture) { trackpadGesture = null; publishZoom(); schedule(); }
+    }
+    function blockCanvasShortcut(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && ['a', 'c', 'x'].includes(event.key.toLowerCase())) event.preventDefault();
     }
     function key(event: KeyboardEvent) {
       if ((event.target as HTMLElement).matches('input,textarea,select') || useEditor.getState().panel) return;
       if (event.code === 'Space') { event.preventDefault(); space = event.type === 'keydown'; }
     }
-    function blur() { pointers.clear(); finish(); space = false; }
+    function blur() { pointers.clear(); finish(); if (trackpadGesture) { trackpadGesture = null; publishZoom(); } space = false; }
     function visibility() { if (document.visibilityState === 'hidden') blur(); }
     function contextMenu(event: MouseEvent) { event.preventDefault(); }
     const observer = new ResizeObserver(resize); observer.observe(canvas);
@@ -151,8 +176,9 @@ export function PixelCanvas({ engine }: { engine: PixelEngine }) {
     const unsubscribeUI = useEditor.subscribe(state => {
       if (documentWidth !== state.width || documentHeight !== state.height) {
         documentWidth = state.width; documentHeight = state.height;
-        pointers.clear(); mode = null; fit();
-      } else if (Math.abs(state.zoom - camera.scale) > .0001) {
+        pointers.clear(); mode = null;
+      }
+      if (!trackpadGesture && mode !== 'gesture' && Math.abs(state.zoom - camera.scale) > .0001) {
         camera = zoomAt(camera, { x: width / 2, y: height / 2 }, state.zoom);
       }
       schedule();
@@ -161,21 +187,32 @@ export function PixelCanvas({ engine }: { engine: PixelEngine }) {
     canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up); canvas.addEventListener('lostpointercapture', up);
     canvas.addEventListener('wheel', wheel, { passive: false });
     canvas.addEventListener('contextmenu', contextMenu);
+    canvas.addEventListener('keydown', blockCanvasShortcut);
+    canvas.addEventListener('gesturestart', nativeGestureStart, { passive: false });
+    canvas.addEventListener('gesturechange', nativeGestureChange, { passive: false });
+    canvas.addEventListener('gestureend', nativeGestureEnd, { passive: false });
     window.addEventListener('keydown', key); window.addEventListener('keyup', key); window.addEventListener('blur', blur);
     document.addEventListener('visibilitychange', visibility);
-    controls.current = { fit, zoom: factor => { camera = zoomAt(camera, { x: width / 2, y: height / 2 }, camera.scale * factor); publishZoom(); schedule(); } };
+    controls.current = {
+      fit,
+      reset: () => { camera = { scale: 1, x: (width - engine.width) / 2, y: (height - engine.height) / 2 - 15 }; publishZoom(); schedule(); },
+      zoom: factor => { camera = zoomAt(camera, { x: width / 2, y: height / 2 }, camera.scale * factor); publishZoom(); schedule(); },
+    };
+    resize();
     return () => {
       observer.disconnect(); unsubscribeEngine(); unsubscribeUI(); cancelAnimationFrame(frame); controls.current = null;
       canvas.removeEventListener('pointerdown', down); canvas.removeEventListener('pointermove', move); canvas.removeEventListener('pointerup', up);
       canvas.removeEventListener('pointercancel', up); canvas.removeEventListener('lostpointercapture', up); canvas.removeEventListener('wheel', wheel);
       canvas.removeEventListener('contextmenu', contextMenu);
+      canvas.removeEventListener('keydown', blockCanvasShortcut);
+      canvas.removeEventListener('gesturestart', nativeGestureStart);
+      canvas.removeEventListener('gesturechange', nativeGestureChange);
+      canvas.removeEventListener('gestureend', nativeGestureEnd);
       window.removeEventListener('keydown', key); window.removeEventListener('keyup', key); window.removeEventListener('blur', blur); document.removeEventListener('visibilitychange', visibility);
     };
   }, [engine]);
-  return <div className={`workspace tool-${tool}`}>
-    <div className="workspace-label"><span className="tiny-dot" /> YOUR CANVAS <span>Let a little idea become something.</span></div>
-    <canvas ref={canvasRef} aria-label="Pixel drawing canvas" data-testid="pixel-canvas" />
-    <div className="zoom-controls"><button aria-label="Zoom out" title="Zoom out" onClick={() => controls.current?.zoom(.8)}><Minus size={16} /></button><span data-testid="zoom">{Math.round(zoom * 100)}%</span><button aria-label="Zoom in" title="Zoom in" onClick={() => controls.current?.zoom(1.25)}><Plus size={16} /></button><i /><button aria-label="Fit canvas" title="Fit canvas" onClick={() => controls.current?.fit()}><Maximize size={16} /></button></div>
-    <div className="gesture-hint"><span className="desktop-hint">Scroll to zoom <b>·</b> Space + drag to pan</span><span className="mobile-hint">One finger to draw <b>·</b> Two fingers to zoom & pan</span></div>
+  return <div className={`workspace tool-${tool}`} onContextMenu={e => e.preventDefault()} onDragStart={e => e.preventDefault()} onCopy={e => e.preventDefault()} onCut={e => e.preventDefault()}>
+    <canvas ref={canvasRef} tabIndex={0} draggable={false} aria-busy={!hydrated} aria-label="Pixel drawing canvas" data-testid="pixel-canvas" />
+    <div className="zoom-controls"><button disabled={!hydrated} aria-label="Zoom out" title="Zoom out" onClick={() => controls.current?.zoom(.8)}><Minus size={16} /></button><button className="zoom-percentage" disabled={!hydrated} data-testid="zoom" aria-label="Reset zoom to 100%" title="Reset zoom to 100%" onClick={() => controls.current?.reset()}>{Math.round(zoom * 100)}%</button><button disabled={!hydrated} aria-label="Zoom in" title="Zoom in" onClick={() => controls.current?.zoom(1.25)}><Plus size={16} /></button><i /><button disabled={!hydrated} aria-label="Fit canvas" title="Fit canvas" onClick={() => controls.current?.fit()}><Maximize size={16} /></button></div>
   </div>;
 }

@@ -5,6 +5,7 @@ export default defineConfig({
   use: { baseURL: 'http://localhost:3000', trace: 'retain-on-failure' },
   projects: [
     { name: 'chromium-desktop', use: { browserName: 'chromium', viewport: { width: 1440, height: 1000 } } },
+    { name: 'webkit-desktop', testMatch: ['**/touchpad.spec.ts', '**/v2.spec.ts', '**/animation.spec.ts'], use: { browserName: 'webkit', viewport: { width: 1440, height: 1000 } } },
     { name: 'chromium-mobile', use: { browserName: 'chromium', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } },
     { name: 'webkit-mobile', use: { browserName: 'webkit', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } },
     { name: 'webkit-landscape', use: { browserName: 'webkit', viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true } },
