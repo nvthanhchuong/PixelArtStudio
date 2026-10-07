@@ -1,0 +1,15 @@
+{
+  "name": "pixel-studio",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/engine.test.ts",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": { "next": "^16.2.0", "react": "^19.2.0", "react-dom": "^19.2.0", "zustand": "^5.0.0", "lucide-react": "^0.577.0" },
+  "devDependencies": { "typescript": "^5.9.0", "@types/node": "^24.0.0", "@types/react": "^19.0.0", "@types/react-dom": "^19.0.0", "tailwindcss": "^4.0.0", "@tailwindcss/postcss": "^4.0.0", "@playwright/test": "^1.58.0", "tsx": "^4.0.0", "pngjs": "^7.0.0", "@types/pngjs": "^6.0.0" }
+}
